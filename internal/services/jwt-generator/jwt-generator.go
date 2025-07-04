@@ -1,20 +1,25 @@
 package jwt_generator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"github.com/gofiber/fiber/v3/log"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	errors2 "jwt-service/internal/errors"
 	"jwt-service/internal/models"
 	"jwt-service/internal/repository"
+	"net/http"
 	"os"
 	"time"
 )
 
 var (
-	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+	jwtSecret  = []byte(os.Getenv("JWT_SECRET"))
+	webhookUrl = os.Getenv("WEBHOOK_URL")
 )
 
 type JWTGenerator interface {
@@ -56,7 +61,13 @@ func (j *JWTGeneratorImpl) GenerateTokenPair(userInfo *models.UserInfo) (*models
 		return nil, err
 	}
 
-	err = j.repo.Insert(userInfo, string(hash), jti)
+	err = j.repo.SaveRefresh(models.RefreshData{
+		UserID:    userInfo.ID,
+		Hash:      string(hash),
+		UserAgent: userInfo.Agent,
+		IP:        userInfo.IP,
+		IssuedAt:  time.Now(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +93,16 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 	jti := claims["jti"].(string)
 
 	refreshData, err := j.repo.GetRefreshData(jti)
-	if err != nil {
+	if err != nil || refreshData.Revoked {
 		return nil, errors2.ErrRefreshNotFoundOrRevoked
 	}
 
-	if userInfo.Agent != refreshData.Agent {
-		j.repo.SetRevokedTrue(jti)
+	if userInfo.Agent != refreshData.UserAgent {
+		if err := j.repo.RevokeRefresh(jti); err != nil {
+			log.Errorf("Failed to revoke refresh: %v", err)
+			return nil, err
+		}
+
 		return nil, errors2.ErrUserAgentChanged
 	}
 
@@ -97,8 +112,11 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 	}
 
 	if userInfo.IP != refreshData.IP {
-		go j.notifyWebhook(refreshData.ID, userInfo.IP)
-		j.repo.SetRevokedTrue(jti)
+		go j.notifyWebhook(refreshData.UserID, userInfo.IP)
+	}
+	err = j.repo.RevokeRefresh(jti)
+	if err != nil {
+		// todo: Нужны логи
 	}
 
 	newTokenPair, err := j.GenerateTokenPair(userInfo)
@@ -110,5 +128,10 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 }
 
 func (j *JWTGeneratorImpl) notifyWebhook(userID string, userIP string) {
+	payload, _ := json.Marshal(map[string]string{
+		"user_id": userID,
+		"ip":      userIP,
+	})
 
+	http.Post(webhookUrl, "application/json", bytes.NewReader(payload))
 }

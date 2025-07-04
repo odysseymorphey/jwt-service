@@ -7,7 +7,7 @@ var (
 	ErrInvalidRefreshToken      = errors.New("invalid refresh token")
 	ErrRefreshNotFoundOrRevoked = errors.New("refresh not found or revoked")
 
-	ErrMissingToken     = errors.New("missing token")
+	ErrMissingAuthToken = errors.New("missing auth token")
 	ErrInvalidToken     = errors.New("invalid token")
 	ErrUserAgentChanged = errors.New("user-agent changed")
 
