@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	""
 	"errors"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/log"
@@ -57,21 +56,22 @@ func RefreshTokenPair(service jwt_generator.JWTGenerator) fiber.Handler {
 		}
 
 		newTokenPair, err := service.RefreshTokenPair(c.Context(), &oldTokenPair, &userInfo)
-
-		switch {
-		case errors.Is(err, errors2.ErrInvalidRefreshToken):
-			return c.Status(fiber.StatusBadRequest).JSON(
-				fiber.Map{
-					"error": errors2.ErrInvalidRefreshToken,
-				})
-		}
 		if err != nil {
 			log.Errorf("Failed to refresh token pair: %v", err)
 
-			return c.Status(fiber.StatusBadRequest).JSON(
-				fiber.Map{
-					"error": errors2.ErrInternalServerError,
-				})
+			switch {
+			case errors.Is(err, errors2.ErrInternalServerError):
+				return c.Status(fiber.StatusInternalServerError).JSON(
+					fiber.Map{
+						"error": errors2.ErrInternalServerError,
+					})
+			default:
+				return c.Status(fiber.StatusBadRequest).JSON(
+					fiber.Map{
+						"error": err,
+					})
+
+			}
 		}
 
 		return c.JSON(newTokenPair)

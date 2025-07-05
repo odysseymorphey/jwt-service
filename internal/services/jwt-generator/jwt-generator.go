@@ -100,7 +100,6 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 	if userInfo.Agent != refreshData.UserAgent {
 		if err := j.repo.RevokeRefresh(jti); err != nil {
 			log.Errorf("Failed to revoke refresh: %v", err)
-			return nil, err
 		}
 
 		return nil, errors2.ErrUserAgentChanged
@@ -114,9 +113,12 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 	if userInfo.IP != refreshData.IP {
 		go j.notifyWebhook(refreshData.UserID, userInfo.IP)
 	}
+
 	err = j.repo.RevokeRefresh(jti)
 	if err != nil {
-		// todo: Нужны логи
+		log.Errorf("Failed to revoke refresh: %v", err)
+
+		return nil, errors2.ErrInternalServerError
 	}
 
 	newTokenPair, err := j.GenerateTokenPair(userInfo)
@@ -133,5 +135,12 @@ func (j *JWTGeneratorImpl) notifyWebhook(userID string, userIP string) {
 		"ip":      userIP,
 	})
 
-	http.Post(webhookUrl, "application/json", bytes.NewReader(payload))
+	resp, err := http.Post(webhookUrl, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		log.Errorf("Failet to notify webhook: %v", err)
+
+		return
+	}
+
+	log.Infof("Notify success. Status: %v, Code: %v", resp.Status, resp.StatusCode)
 }
