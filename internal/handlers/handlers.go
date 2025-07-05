@@ -28,6 +28,7 @@ var (
 // @Failure     400 {object} models.ErrorResponse
 // @Failure     500 {object} models.ErrorResponse
 // @Router      /tokens/generate [post]
+// @Example     curl -X POST "http://localhost:8181/api/v1/tokens/generate?user_id=123e4567-e89b-12d3-a456-426614174000" -H "User-Agent: swagger-client"
 func GenerateTokenPair(service jwt_generator.JWTGenerator) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		log.Infof("Auth: %v", c.Get("Authorization"))
@@ -71,6 +72,12 @@ func GenerateTokenPair(service jwt_generator.JWTGenerator) fiber.Handler {
 // @Failure     400 {object} models.ErrorResponse
 // @Failure     500 {object} models.ErrorResponse
 // @Router      /tokens/refresh [post]
+// @Example     request body:
+//
+//	{
+//	  "access": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9...",
+//	  "refresh": "c29tZSByZWZyZXNoIHRva2VuIGJhc2U2NA=="
+//	}
 func RefreshTokenPair(service jwt_generator.JWTGenerator) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		oldTokenPair := models.TokenPair{}
@@ -119,6 +126,7 @@ func RefreshTokenPair(service jwt_generator.JWTGenerator) fiber.Handler {
 // @Success     200 {object} models.UserResponse
 // @Failure     401 {object} models.ErrorResponse
 // @Router      /whoami [get]
+// @Example     curl -X GET "http://localhost:8181/api/v1/whoami" -H "Authorization: Bearer {your-access-token}"
 func Whoami(c fiber.Ctx) error {
 	user := c.Locals("user").(string)
 	return c.JSON(fiber.Map{
@@ -135,6 +143,7 @@ func Whoami(c fiber.Ctx) error {
 // @Success     204
 // @Failure     500 {object} models.ErrorResponse
 // @Router      /logout [post]
+// @Example     curl -X POST "http://localhost:8181/api/v1/logout" -H "Authorization: Bearer {your-access-token}"
 func Logout(repo repository.JWTRepository) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		auth := c.Get("Authorization")
