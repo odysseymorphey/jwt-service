@@ -2,17 +2,14 @@ package middleware
 
 import (
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/log"
 	"github.com/golang-jwt/jwt/v5"
+	"jwt-service/internal/config"
 	errors2 "jwt-service/internal/errors"
 	"jwt-service/internal/repository"
-	"os"
 )
 
-var (
-	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
-)
-
-func AuthMiddleware(db repository.JWTRepository) fiber.Handler {
+func AuthMiddleware(repo repository.JWTRepository, cfg *config.Config) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		auth := c.Get("Authorization")
 		if auth == "" {
@@ -26,7 +23,7 @@ func AuthMiddleware(db repository.JWTRepository) fiber.Handler {
 			if token.Method != jwt.SigningMethodHS512 {
 				return nil, errors2.ErrUnexpectedHashMethod
 			}
-			return jwtSecret, nil
+			return cfg.JWTSecret, nil
 		})
 		if err != nil || !token.Valid {
 			return errors2.ErrInvalidToken
@@ -34,8 +31,10 @@ func AuthMiddleware(db repository.JWTRepository) fiber.Handler {
 		claims := token.Claims.(jwt.MapClaims)
 		jti := claims["jti"].(string)
 
-		exist, err := db.IsJWTBlacklisted(jti)
-		if err != nil || !exist {
+		exist, err := repo.IsJWTBlacklisted(jti)
+		if err != nil || exist {
+			log.Errorf("err: %v; exist: %v", err, exist)
+
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "token revoked",
 			})

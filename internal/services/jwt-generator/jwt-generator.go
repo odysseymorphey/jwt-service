@@ -3,23 +3,20 @@ package jwt_generator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/gofiber/fiber/v3/log"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"jwt-service/internal/config"
 	errors2 "jwt-service/internal/errors"
 	"jwt-service/internal/models"
 	"jwt-service/internal/repository"
 	"net/http"
-	"os"
 	"time"
-)
-
-var (
-	jwtSecret  = []byte(os.Getenv("JWT_SECRET"))
-	webhookUrl = os.Getenv("WEBHOOK_URL")
 )
 
 type JWTGenerator interface {
@@ -29,12 +26,16 @@ type JWTGenerator interface {
 }
 
 type JWTGeneratorImpl struct {
-	repo repository.JWTRepository
+	repo       repository.JWTRepository
+	jwtSecret  []byte
+	webhookUrl string
 }
 
-func New(repo repository.JWTRepository) *JWTGeneratorImpl {
+func New(repo repository.JWTRepository, cfg *config.Config) *JWTGeneratorImpl {
 	return &JWTGeneratorImpl{
-		repo: repo,
+		repo:       repo,
+		jwtSecret:  []byte(cfg.JWTSecret),
+		webhookUrl: cfg.WebhookURL,
 	}
 }
 
@@ -49,26 +50,50 @@ func (j *JWTGeneratorImpl) GenerateTokenPair(userInfo *models.UserInfo) (*models
 		"jti": jti,
 	}
 
-	accessToken, err := token.SignedString(jwtSecret)
+	accessToken, err := token.SignedString(j.jwtSecret)
 	if err != nil {
+		log.Errorf("failed to get signed string: %v", err)
 		return nil, err
 	}
 
 	raw := fmt.Sprintf("%s:%d", userInfo.ID, time.Now().UnixNano())
 	refreshToken := base64.StdEncoding.EncodeToString([]byte(raw))
-	hash, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
+
+	sha := sha256.Sum256([]byte(refreshToken))
+	short := hex.EncodeToString(sha[:])
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(short), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		log.Errorf("failed to generate bcrytp: %v", err)
+		return nil, fmt.Errorf("failed to generate bcrypt: %v", err)
 	}
 
-	err = j.repo.SaveRefresh(models.RefreshData{
+	tx, err := j.repo.BeginTx()
+	if err != nil {
+		log.Errorf("failed to start tx")
+		return nil, err
+	}
+	defer tx.Rollback(context.Background())
+
+	refreshData := models.RefreshData{
+		JTI:       jti,
 		UserID:    userInfo.ID,
 		Hash:      string(hash),
 		UserAgent: userInfo.Agent,
 		IP:        userInfo.IP,
 		IssuedAt:  time.Now(),
-	})
+	}
+
+	log.Infof("Refresh data: %v", refreshData)
+
+	err = j.repo.SaveRefreshTx(tx, refreshData)
 	if err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(context.Background()); err != nil {
+		log.Errorf("Tx commit failed: %v", err)
+
 		return nil, err
 	}
 
@@ -84,13 +109,14 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 			return nil, errors2.ErrUnexpectedHashMethod
 		}
 
-		return jwtSecret, nil
+		return j.jwtSecret, nil
 	})
 	if err != nil || !access.Valid {
 		return nil, errors2.ErrInvalidAccessToken
 	}
 	claims := access.Claims.(jwt.MapClaims)
 	jti := claims["jti"].(string)
+	userInfo.ID = claims["sub"].(string)
 
 	refreshData, err := j.repo.GetRefreshData(jti)
 	if err != nil || refreshData.Revoked {
@@ -105,7 +131,9 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 		return nil, errors2.ErrUserAgentChanged
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(refreshData.Hash), []byte(tokenPair.Refresh))
+	sha := sha256.Sum256([]byte(tokenPair.Refresh))
+	hashed := hex.EncodeToString(sha[:])
+	err = bcrypt.CompareHashAndPassword([]byte(refreshData.Hash), []byte(hashed))
 	if err != nil {
 		return nil, errors2.ErrInvalidRefreshToken
 	}
@@ -114,7 +142,14 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 		go j.notifyWebhook(refreshData.UserID, userInfo.IP)
 	}
 
-	err = j.repo.RevokeRefresh(jti)
+	tx, err := j.repo.BeginTx()
+	if err != nil {
+		log.Errorf("failed to start tx")
+		return nil, err
+	}
+	defer tx.Rollback(context.Background())
+
+	err = j.repo.RevokeRefreshTx(tx, jti)
 	if err != nil {
 		log.Errorf("Failed to revoke refresh: %v", err)
 
@@ -123,7 +158,15 @@ func (j *JWTGeneratorImpl) RefreshTokenPair(ctx context.Context, tokenPair *mode
 
 	newTokenPair, err := j.GenerateTokenPair(userInfo)
 	if err != nil {
+		log.Errorf("Failed to generate new token pair: %v", err)
+
 		return nil, errors2.ErrInternalServerError
+	}
+
+	if err = tx.Commit(context.Background()); err != nil {
+		log.Errorf("Tx commit failed: %v", err)
+
+		return nil, err
 	}
 
 	return newTokenPair, nil
@@ -135,7 +178,7 @@ func (j *JWTGeneratorImpl) notifyWebhook(userID string, userIP string) {
 		"ip":      userIP,
 	})
 
-	resp, err := http.Post(webhookUrl, "application/json", bytes.NewReader(payload))
+	resp, err := http.Post(j.webhookUrl, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		log.Errorf("Failet to notify webhook: %v", err)
 

@@ -2,9 +2,9 @@ package postgres
 
 import (
 	"context"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"jwt-service/internal/models"
-	"time"
 )
 
 type Postgres struct {
@@ -27,19 +27,12 @@ func New(connStr string) (*Postgres, error) {
 	}, nil
 }
 
-func (p *Postgres) Close() {
-	p.pool.Close()
+func (p *Postgres) BeginTx() (pgx.Tx, error) {
+	return p.pool.Begin(context.Background())
 }
 
-func (p *Postgres) SaveRefresh(data models.RefreshData) error {
-	const query = `INSERT INTO refresh_tokens
-         (jti,user_id,hash,user_agent,ip,issued_at,revoked)
-         VALUES ($1,$2,$3,$4,$5,$6,false)`
-
-	_, err := p.pool.Exec(context.Background(), query,
-		data.JTI, data.UserID, data.Hash, data.UserAgent, data.IP, time.Now())
-
-	return err
+func (p *Postgres) Close() {
+	p.pool.Close()
 }
 
 func (p *Postgres) GetRefreshData(jti string) (*models.RefreshData, error) {
@@ -61,14 +54,6 @@ func (p *Postgres) RevokeRefresh(jti string) error {
 	return err
 }
 
-func (p *Postgres) RevokeAllRefresh(userID string) error {
-	const query = `UPDATE refresh_tokens SET revoked=true WHERE user_id=$1`
-
-	_, err := p.pool.Exec(context.Background(), query, userID)
-
-	return err
-}
-
 func (p *Postgres) IsJWTBlacklisted(jti string) (bool, error) {
 	const query = `SELECT EXISTS(SELECT 1 FROM jwt_blacklist WHERE jti=$1)`
 
@@ -79,11 +64,33 @@ func (p *Postgres) IsJWTBlacklisted(jti string) (bool, error) {
 	return exists, err
 }
 
-func (p *Postgres) BlacklistJWT(jti string) error {
-	const query = `INSERT INTO jwt_blacklist (jti) VALUES ($1)
-         ON CONFLICT DO NOTHING`
+func (p *Postgres) SaveRefreshTx(tx pgx.Tx, data models.RefreshData) error {
+	const query = `INSERT INTO refresh_tokens
+         (jti,user_id,hash,user_agent,ip,issued_at,revoked)
+         VALUES ($1,$2,$3,$4,$5,$6,false)`
 
-	_, err := p.pool.Exec(context.Background(), query, jti)
+	_, err := tx.Exec(context.Background(), query,
+		data.JTI, data.UserID, data.Hash, data.UserAgent, data.IP, data.IssuedAt)
+	return err
+}
 
+func (p *Postgres) RevokeRefreshTx(tx pgx.Tx, jti string) error {
+	const query = `UPDATE refresh_tokens SET revoked=true WHERE jti=$1`
+
+	_, err := tx.Exec(context.Background(), query, jti)
+	return err
+}
+
+func (p *Postgres) RevokeAllRefreshTx(tx pgx.Tx, userID string) error {
+	const query = `UPDATE refresh_tokens SET revoked=true WHERE user_id=$1`
+
+	_, err := tx.Exec(context.Background(), query, userID)
+	return err
+}
+
+func (p *Postgres) BlacklistJWTTx(tx pgx.Tx, jti string) error {
+	const query = `INSERT INTO jwt_blacklist (jti) VALUES ($1) ON CONFLICT DO NOTHING`
+
+	_, err := tx.Exec(context.Background(), query, jti)
 	return err
 }

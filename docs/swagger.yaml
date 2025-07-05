@@ -1,0 +1,128 @@
+basePath: /api/v1
+definitions:
+  models.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  models.TokenPair:
+    properties:
+      access:
+        type: string
+      refresh:
+        type: string
+    type: object
+  models.UserResponse:
+    properties:
+      user_id:
+        type: string
+    type: object
+host: localhost:8181
+info:
+  contact: {}
+  description: Authentication service with access/refresh tokens
+  title: Auth Service API
+  version: "1.0"
+paths:
+  /logout:
+    post:
+      description: Adds the current access token to blacklist and revokes all refresh
+        tokens
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Logout user and revoke tokens
+      tags:
+      - Logout
+  /tokens/generate:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new pair of tokens for the given user GUID
+      parameters:
+      - description: User GUID
+        in: query
+        name: user_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.TokenPair'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Generate access & refresh tokens
+      tags:
+      - Auth
+  /tokens/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Rotates tokens using the provided old pair
+      parameters:
+      - description: Old token pair
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.TokenPair'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.TokenPair'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Refresh access & refresh tokens
+      tags:
+      - Auth
+  /whoami:
+    get:
+      description: Returns the user_id extracted from a valid Bearer token
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get current user GUID
+      tags:
+      - Whoami
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -1,13 +1,19 @@
 package repository
 
-import "jwt-service/internal/models"
+import (
+	"github.com/jackc/pgx/v5"
+	"jwt-service/internal/models"
+)
 
 type JWTRepository interface {
-	SaveRefresh(data models.RefreshData) error
 	GetRefreshData(jti string) (*models.RefreshData, error)
 	RevokeRefresh(jti string) error
-	RevokeAllRefresh(userID string) error
 	IsJWTBlacklisted(jti string) (bool, error)
-	BlacklistJWT(jti string) error
 	Close()
+
+	BeginTx() (pgx.Tx, error)
+	SaveRefreshTx(tx pgx.Tx, data models.RefreshData) error
+	RevokeRefreshTx(tx pgx.Tx, jti string) error
+	RevokeAllRefreshTx(tx pgx.Tx, userID string) error
+	BlacklistJWTTx(tx pgx.Tx, jti string) error
 }

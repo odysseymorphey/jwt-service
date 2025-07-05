@@ -2,13 +2,14 @@ package router
 
 import (
 	"github.com/gofiber/fiber/v3"
+	"jwt-service/internal/config"
 	"jwt-service/internal/handlers"
 	"jwt-service/internal/middleware"
 	"jwt-service/internal/repository"
 	"jwt-service/internal/services/jwt-generator"
 )
 
-func RegisterRoutes(app *fiber.App, service jwt_generator.JWTGenerator, repo repository.JWTRepository) {
+func RegisterRoutes(app *fiber.App, service jwt_generator.JWTGenerator, repo repository.JWTRepository, cfg *config.Config) {
 	api := app.Group("/api/v1")
 
 	{
@@ -19,7 +20,7 @@ func RegisterRoutes(app *fiber.App, service jwt_generator.JWTGenerator, repo rep
 	}
 
 	{
-		auth := api.Group("/", middleware.AuthMiddleware(repo))
+		auth := api.Group("/", middleware.AuthMiddleware(repo, cfg))
 
 		auth.Get("/whoami", handlers.Whoami)
 		auth.Post("/logout", handlers.Logout(repo))
